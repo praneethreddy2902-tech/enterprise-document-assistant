@@ -1,0 +1,22 @@
+# Python environment and generated files
+.venv/
+__pycache__/
+*.py[cod]
+
+# Local configuration and secrets
+.env
+.env.*
+!.env.example
+
+# Test and tooling caches
+.pytest_cache/
+.coverage
+htmlcov/
+.ruff_cache/
+
+# Local uploads and logs
+uploads/
+*.log
+
+# macOS
+.DS_Store
