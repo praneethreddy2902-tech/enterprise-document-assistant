@@ -1,0 +1,85 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Enterprise Document Assistant</title>
+  <style>
+    :root{color-scheme:light;--ink:#172b42;--muted:#62758a;--line:#dce4ec;--blue:#2459d1;--paper:#fff;--bg:#f4f7fb}
+    *{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:15px/1.6 system-ui,-apple-system,sans-serif}
+    button,input,textarea,select{font:inherit}button,select,input[type=file]{cursor:pointer}button:disabled{opacity:.55;cursor:wait}
+    :focus-visible{outline:3px solid #86b0ff;outline-offset:3px}header{background:var(--paper);border-bottom:1px solid var(--line);padding:25px max(24px,calc((100vw - 1200px)/2))}
+    .topline{display:flex;align-items:center;justify-content:space-between;gap:24px}.brand{font-weight:750;font-size:18px;letter-spacing:-.4px}.brand span{background:var(--blue);color:white;padding:5px 9px;border-radius:8px;margin-right:10px}
+    .status{font-size:12px;color:var(--muted)}h1{font-size:clamp(26px,4vw,36px);line-height:1.25;letter-spacing:-1px;margin:24px 0 8px}p{margin:0 0 18px}.intro{color:var(--muted);max-width:700px}
+    main{max-width:1248px;margin:auto;padding:28px 24px;display:grid;grid-template-columns:340px minmax(0,1fr);gap:24px;align-items:start}.card{background:var(--paper);border:1px solid var(--line);border-radius:14px;padding:24px;margin-bottom:20px}
+    h2{font-size:17px;margin:0 0 16px;letter-spacing:-.3px}.eyebrow{font-size:11px;text-transform:uppercase;letter-spacing:1.6px;font-weight:750;color:var(--muted);margin-bottom:8px}.sub{font-size:13px;color:var(--muted)}label{display:block;font-weight:600;font-size:13px;margin-bottom:8px}
+    select,textarea,input[type=file]{width:100%;border:1px solid #bfcddc;border-radius:8px;background:white;color:var(--ink);padding:11px}textarea{resize:vertical;min-height:112px}button{border:0;border-radius:8px;padding:11px 17px;font-weight:650;background:var(--blue);color:white}.secondary{background:#eaf0fb;color:var(--blue);padding:6px 11px;font-size:12px}
+    .row{display:flex;align-items:center;justify-content:space-between;gap:12px}.notice{font-size:12px;padding:10px 12px;background:#fff7e8;border:1px solid #f2d7a3;border-radius:8px;color:#765018;margin-top:12px}.upload-button{width:100%;margin-top:12px}.feedback{font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere;margin-top:12px}.error{color:#aa2937}.success{color:#126b53}
+    .document{border-top:1px solid var(--line);padding:13px 0;overflow-wrap:anywhere}.document strong{font-size:13px;display:block}.tag{display:inline-block;font-size:10px;text-transform:uppercase;letter-spacing:.6px;padding:2px 7px;background:#eef3fa;border-radius:4px;margin:6px 4px 0 0;color:#47617e}.empty{color:var(--muted);font-size:13px;padding:14px 0}.ask-card{padding:28px}.actions{margin-top:12px}.conversation{margin-top:24px}.exchange{border-top:1px solid var(--line);padding-top:22px;margin-top:22px}.question{font-weight:650;margin-bottom:12px;white-space:pre-wrap;overflow-wrap:anywhere}.answer{white-space:pre-wrap;overflow-wrap:anywhere;line-height:1.8}.badge{font-size:11px;font-weight:700;color:#126b53;background:#e8f6f0;border-radius:5px;padding:4px 8px;display:inline-block;margin:12px 0}.badge.bad{color:#8f4f10;background:#fff2dc}
+    blockquote{margin:10px 0;padding:12px 15px;border-left:3px solid #b9c9ee;background:#f5f8fe;font-size:13px;white-space:pre-wrap;overflow-wrap:anywhere}.source{font-size:12px;color:var(--muted);overflow-wrap:anywhere}details{font-size:12px;color:var(--muted);margin-top:16px}summary{cursor:pointer;font-weight:600}pre{white-space:pre-wrap;overflow-wrap:anywhere;font:12px/1.8 ui-monospace,monospace}.examples{display:flex;flex-wrap:wrap;gap:8px;margin:16px 0}.examples button{background:#f2f5fb;color:#4c6280;font-size:12px;font-weight:500;padding:7px 10px}.footnote{font-size:12px;color:var(--muted);margin-top:14px}
+    @media(max-width:800px){main{grid-template-columns:1fr;padding:20px 16px}header{padding:22px 20px}.card{padding:20px}.topline{align-items:flex-start}.status{max-width:120px;text-align:right}aside{display:grid;grid-template-columns:1fr 1fr;gap:16px}aside .card:last-child{grid-column:1/-1}}@media(max-width:540px){aside{display:block}.topline{gap:10px}.brand{font-size:15px}}
+  </style>
+</head>
+<body>
+  <header>
+    <div class="topline"><div class="brand"><span>D</span>Document Assistant</div><div id="health" class="status" role="status">Checking database…</div></div>
+    <h1>Your policies. Clear answers.</h1>
+    <p class="intro">Ask questions about company policies and follow every answer back to its source.</p>
+    <div id="mode-notice" class="notice" role="status" hidden>Demo mode · No API key required. Fake embeddings and scripted excerpts demonstrate the flow, not AI answer quality. Upload sample Markdown policies to the separate demo library.</div>
+  </header>
+  <main>
+    <aside>
+      <section class="card">
+        <div class="eyebrow">Workspace</div><h2>Who’s asking?</h2>
+        <label for="identity">Demo identity</label>
+        <select id="identity"><option value="guest">Guest · Public policies</option><option value="alice">Alice · Engineering</option><option value="bob">Bob · HR</option><option value="carol">Carol · Finance</option></select>
+        <div class="notice">Demo identity selection is not authentication. This interface is for local development.</div>
+      </section>
+      <section class="card">
+        <div class="eyebrow">Knowledge library</div><h2>Upload a policy</h2>
+        <p class="sub">Choose a Markdown policy with title, department, visibility, version, status, effective, and updated metadata.</p>
+        <form id="upload-form"><label for="policy-file">Markdown file · up to 2 MiB</label><input id="policy-file" type="file" accept=".md,text/markdown" required><button id="upload-button" class="upload-button" type="submit">Upload & index</button></form>
+        <div id="upload-feedback" class="feedback" role="status" aria-live="polite"></div>
+        <details><summary>See the metadata format</summary><pre>---
+title: Leave policy
+department: hr
+visibility: internal
+version: 1
+status: active
+effective: 2026-06-30
+updated: 2026-06-30
+---
+
+## Annual leave
+Employees receive twenty days of annual leave.</pre></details>
+      </section>
+      <section class="card"><div class="row"><h2>Available policies</h2><button id="refresh" type="button" class="secondary">Refresh</button></div><div id="documents" aria-live="polite"><p class="empty">Loading policies…</p></div></section>
+    </aside>
+    <section class="card ask-card">
+      <div class="eyebrow">Policy assistant</div><h2>What would you like to know?</h2>
+      <p class="sub">Answers use policies available to your selected identity. Ask about a previous version to explore policy history.</p>
+      <div class="examples"><button type="button" data-question="How many days of annual leave do employees receive?">Annual leave allowance</button><button type="button" data-question="What was the previous travel reimbursement policy?">Previous travel policy</button></div>
+      <form id="ask-form"><label for="question">Your question</label><textarea id="question" maxlength="4000" required placeholder="For example, how do I request annual leave?"></textarea><div class="row actions"><span class="sub">Sources and checks included</span><button id="ask-button" type="submit">Ask assistant</button></div></form>
+      <div id="ask-feedback" class="feedback" role="status" aria-live="polite"></div>
+      <div id="conversation" class="conversation" aria-live="polite"><p class="empty">Your answers and source quotations will appear here.</p></div>
+      <p class="footnote">Review citations and warnings before relying on an answer. Quotation checks confirm text matches, not that every claim is correct.</p>
+    </section>
+  </main>
+  <script>
+    const $ = id => document.getElementById(id);
+    let identityVersion = 0, listVersion = 0, busy = false;
+    function element(tag, text, className) { const node = document.createElement(tag); if (text !== undefined) node.textContent = text; if (className) node.className = className; return node; }
+    function feedback(id, text, bad = false) { $(id).textContent = text; $(id).className = 'feedback ' + (bad ? 'error' : 'success'); }
+    async function request(url, options) { const response = await fetch(url, options); let data; try { data = await response.json(); } catch { throw new Error('The server returned an unreadable response.'); } if (!response.ok) { const message = typeof data.detail === 'string' ? data.detail : 'Please check the request and try again.'; throw new Error(message); } return data; }
+    function controls() { $('ask-button').disabled = busy; $('policy-file').disabled = busy || $('identity').value === 'guest'; $('upload-button').disabled = busy || $('identity').value === 'guest'; }
+    async function loadDocuments() { const version = ++listVersion, identity = $('identity').value; $('documents').replaceChildren(element('p', 'Loading policies…', 'empty')); try { const docs = await request('/documents?username=' + encodeURIComponent(identity)); if (version !== listVersion) return; $('documents').replaceChildren(); if (!docs.length) $('documents').append(element('p', 'No policies are available to this identity yet.', 'empty')); for (const doc of docs) { const item = element('div', undefined, 'document'); item.append(element('strong', doc.title + ' · v' + doc.version)); item.append(element('span', doc.visibility, 'tag'), element('span', doc.status, 'tag')); item.append(element('div', doc.department + ' · Updated ' + doc.updated_on, 'source')); $('documents').append(item); } } catch (error) { if (version === listVersion) $('documents').replaceChildren(element('p', error.message, 'error')); } }
+    $('identity').addEventListener('change', () => { identityVersion++; $('conversation').replaceChildren(element('p', 'Ask a question as the selected identity.', 'empty')); feedback('ask-feedback', ''); feedback('upload-feedback', ''); controls(); loadDocuments(); });
+    $('refresh').addEventListener('click', loadDocuments);
+    document.querySelectorAll('[data-question]').forEach(button => button.addEventListener('click', () => { $('question').value = button.dataset.question; $('question').focus(); }));
+    $('upload-form').addEventListener('submit', async event => { event.preventDefault(); if (busy) return; const file = $('policy-file').files[0]; if (!file) return; if (file.size > 2 * 1024 * 1024) { feedback('upload-feedback', 'Choose a file no larger than 2 MiB.', true); return; } const version = identityVersion; const form = new FormData(); form.append('file', file); form.append('username', $('identity').value); busy = true; controls(); feedback('upload-feedback', 'Validating and indexing policy…'); try { const result = await request('/documents', {method: 'POST', body: form}); if (version !== identityVersion) return; feedback('upload-feedback', result.title + ' v' + result.version + ': ' + result.outcome + ' · ' + result.chunks + ' new chunks'); await loadDocuments(); } catch (error) { if (version === identityVersion) feedback('upload-feedback', error.message, true); } finally { busy = false; controls(); } });
+    $('ask-form').addEventListener('submit', async event => { event.preventDefault(); const question = $('question').value.trim(); if (!question || busy) return; const version = identityVersion, identity = $('identity').value; busy = true; controls(); feedback('ask-feedback', 'Searching policies and checking sources…'); try { const answer = await request('/ask', {method: 'POST', headers: {'Content-Type': 'application/json'}, body: JSON.stringify({question, username: identity})}); if (version !== identityVersion) return; const exchange = element('article', undefined, 'exchange'); exchange.append(element('div', question, 'question'), element('div', answer.text, 'answer')); exchange.append(element('span', !answer.answered ? 'Insufficient evidence' : answer.fully_grounded ? 'Quotation checks passed' : 'Untrusted answer', 'badge' + (answer.fully_grounded ? '' : ' bad'))); for (const warning of answer.warnings) exchange.append(element('div', warning, 'notice')); for (const citation of answer.citations) { exchange.append(element('blockquote', citation.quote)); exchange.append(element('div', citation.label + ' · ' + citation.source + (citation.verified ? ' · Quote verified' : ' · Quote not verified'), 'source')); } const details = element('details'); details.append(element('summary', 'View request trace'), element('pre', answer.trace.join('\n'))); exchange.append(details); const empty = $('conversation').querySelector('.empty'); if (empty) empty.remove(); $('conversation').prepend(exchange); feedback('ask-feedback', ''); } catch (error) { if (version === identityVersion) feedback('ask-feedback', error.message, true); } finally { busy = false; controls(); } });
+    request('/config').then(config => { $('mode-notice').hidden = !config.demo_mode; }).catch(() => {});
+    controls(); loadDocuments(); request('/health').then(() => { $('health').textContent = '● Database connected'; }).catch(() => { $('health').textContent = 'Database unavailable'; });
+  </script>
+</body>
+</html>

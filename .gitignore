@@ -20,3 +20,24 @@ uploads/
 
 # macOS
 .DS_Store
+
+# Older nested project
+/enterprise-doc-assistant/
+
+# Generated output and editor settings
+/output/
+/.vscode/
+
+# Local databases and vector stores
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+chroma_db/
+.chroma/
+vector_store/
+
+# Frontend dependencies and builds
+node_modules/
+dist/
