@@ -1,343 +1,264 @@
-# Enterprise Document Assistant
+Enterprise Document Assistant
+A document question-answering application that retrieves company policy evidence, applies access and version filters, and generates answers with traceable citations.
 
-A learning-focused enterprise RAG application for answering policy
-questions using permission-aware retrieval and traceable citations.
+Built with Python, FastAPI, PostgreSQL, pgvector, OpenAI, and a plain HTML/JavaScript interface. The project includes a separate offline demo mode for exploring the application without an OpenAI API key.
+Problem statement
+Company policies are often spread across multiple documents and versions. Finding an answer requires locating the right document, checking whether it is current, and verifying that the employee is allowed to access it. A fluent AI response is insufficient if it relies on an outdated policy, reveals restricted information, or cannot identify its supporting evidence.
 
-## Phase 1
+This project explores how retrieval-augmented generation (RAG) can help users ask policy questions in plain English while keeping document access, version selection, and source traceability explicit.
+Objectives
+- Retrieve relevant policy sections using both semantic and keyword search.
+- Filter restricted and ineligible policy content before it reaches model-backed processing.
+- Return answers with references and supporting quotations.
+- Support historical questions without silently treating superseded policies as current.
+- Refuse questions when the available evidence is insufficient.
+- Record completed answers and refusals for inspection.
+Current status
+Phase 1 implementation is in place; live OpenAI end-to-end validation remains pending.
 
-- Markdown policy ingestion and metadata validation
-- Section-aware chunking
-- PostgreSQL and pgvector storage
-- Permission-filtered hybrid retrieval
-- Answers with supporting quotations
-- Version-aware retrieval and audit records
-- FastAPI and a simple HTML interface
+Implemented components include configuration validation, PostgreSQL storage, Markdown ingestion, hybrid retrieval, reranking, answer generation, bounded retries, audit records, FastAPI endpoints, and the browser interface.
 
-## Current status
+The repository includes unit tests with fake providers and opt-in PostgreSQL integration tests. Their presence does not establish that the latest checkout has passed: run the commands below in your environment. Model-backed behavior and retrieval quality require separate live evaluation. Visual browser verification also remains pending in the documented project status.
 
-Local PostgreSQL and pgvector setup and the initial database schema are configured.
-Validated settings, shared data models, the PostgreSQL repository, and Markdown
-ingestion, retrieval with reranking, and cited answer generation are implemented.
-Pipeline orchestration, the FastAPI endpoints, and a simple HTML upload/chat
-interface are implemented. Live OpenAI calls remain unverified.
+Authentication is simulated. Users select a seeded identity; client-supplied usernames can be impersonated. This is a local learning and portfolio application, not a production access-control system.
+Features
+Area	Implementation
+Document ingestion	UTF-8 Markdown uploads with validated YAML metadata
+Chunking	Section-aware splitting with configurable character size and overlap
+Duplicate handling	Content hashing, duplicate detection, and atomic edits of a title/version
+Retrieval	pgvector similarity search and PostgreSQL full-text search, fused using reciprocal rank fusion (RRF)
+Access filtering	SQL filters applied to both vector and keyword candidates
+Reranking	Structured model scores with minimum-score filtering and a top-k limit
+Evidence handling	Conditional evidence grading and at most one query-rewrite retry
+Answer generation	Structured drafts, numbered references, and supporting quotations
+Citation checks	Quote matching, reference checks, and at most one repair attempt
+Policy versions	Current-policy eligibility and an explicit historical-query path
+Warnings	Historical-policy, freshness, and failed-grounding warnings
+Auditing	Records for completed answers and refusals
+Offline demo	Scripted providers and isolated database storage; no OpenAI calls
 
-## Development environment
 
-Activate the virtual environment:
-
-    source .venv/bin/activate
-
-Start Docker Desktop, then validate and start the database:
-
-    docker compose config --quiet
-    docker compose up -d --wait
-    docker compose ps
-
-PostgreSQL is available at `localhost:5434` with database `ragdb`, user
-`rag`, and password `ragsecret`. These credentials are for local development.
-Port 5434 is used because port 5433 was already occupied on the development host.
-The named `pgdata` volume preserves database contents across container restarts.
-
-If `.env` does not exist, copy `.env.example` to `.env`. Otherwise, add any
-missing settings from the example without replacing your existing secrets.
-Set `OPENAI_API_KEY` for live model operations, or enable `DEMO_MODE=true` for
-the offline demonstration described below.
-
-Enable pgvector and inspect the connection:
-
-    docker compose exec -T db psql -U rag -d ragdb -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
-    docker compose exec -T db psql -U rag -d ragdb -c "SELECT current_database(), current_user, extversion FROM pg_extension WHERE extname = 'vector';"
-
-Stop the database while keeping its data:
-
-    docker compose down
-
-## Database schema
-
-Apply the schema after starting the database:
-
-    docker compose exec -T db psql -U rag -d ragdb -v ON_ERROR_STOP=1 < schema.sql
-
-This creates `users`, `documents`, `chunks`, and `audit_events`, plus HNSW
-vector and GIN full-text indexes. It seeds Alice (engineering), Bob (HR),
-Carol (finance), and a guest. These are demo identities, not authentication.
-
-The script can run repeatedly without deleting data or overwriting users.
-Future changes to existing tables require migrations.
-
-Documents have a unique content hash and a unique title/version pair. Chunks
-store 1536-dimensional embeddings and a generated English full-text index.
-Policy status is supplied explicitly in upload metadata. Retrieval enforces
-visibility and current-policy eligibility in SQL before either search selects
-candidates; the schema alone does not enforce those access rules.
-
-Run database smoke checks (all test data is rolled back):
-
-    docker compose exec -T db psql -U rag -d ragdb -v ON_ERROR_STOP=1 < tests/schema_smoke.sql
-
-## Configuration and data models
-
-`assistant.config.load_settings()` reads the project `.env`, with environment
-variables taking precedence. It does not change the process environment or call
-external services. Settings use the defaults documented in `.env.example` and
-reject incompatible chunking, retrieval limits, and embedding dimensions.
-Database credentials and the OpenAI key are masked in settings representations.
-An API key is required only when a model-backed operation explicitly requests it.
-
-`assistant.models.PolicyMetadata` validates the PDF's required front-matter
-fields: `title`, `department`, `visibility`, `version`, `status`, `effective`,
-and `updated`. Dates use `YYYY-MM-DD`. Department names are normalized to
-lowercase. Shared dataclasses represent users, source documents, chunks, search
-hits, citations, and answers. Citation labels include the policy version.
-Quotation checks and claim coverage still belong to the generation layer.
-
-Run the configuration and model tests without OpenAI or Docker:
-
-    .venv/bin/python -m unittest discover -s tests -v
-
-## Repository
-
-`assistant.repository` provides a lazy connection pool with connection checks,
-per-connection pgvector registration, and an explicit `close_pool()` for shutdown.
-Apply `schema.sql` before opening the pool. Use `with pool().connection() as conn`
-to borrow a connection; the context commits successful work and rolls back errors.
-
-Trusted ingestion calls `find_by_hash`, `find_by_version`, and `store_document`.
-The store operation skips duplicate hashes and atomically replaces an edited
-title/version and its chunks. Concurrent uploads are serialized by content hash
-and policy title. Compute embeddings before calling it. It preserves the supplied
-active/superseded status; publication must explicitly update old policy metadata.
-
-For user requests, load the identity with `get_user` and pass that trusted user
-to `list_documents`, `searchable_chunks`, and `hybrid_search`. Both vector and
-keyword candidate selection apply SQL visibility filters. Restricted access
-requires employee status and the owning department. Normal queries exclude
-superseded and future-effective policies; historical queries include superseded
-policies but still exclude future-effective policies. Full-text search uses
-PostgreSQL `ts_rank`, rather than BM25. Search results carry RRF scores for later
-reranking. `record_event` stores answer outcomes and source labels.
-
-Run all tests including PostgreSQL integration tests:
-
-    RUN_DATABASE_TESTS=1 .venv/bin/python -m unittest discover -s tests -v
-
-Integration tests create a temporary schema per test and roll back all fixtures.
-They require a running database and the repository dependencies from `uv.lock`.
-
-## Markdown ingestion
-
-`assistant.ingestion.parse` requires a `.md` filename, a YAML front-matter block
-with all seven metadata fields, and a nonempty body. See
-`fixtures/policies/leave_policy.md` for a fictional demonstration policy.
-Malformed YAML, duplicate fields, unsupported fields, and invalid metadata are
-rejected before embedding. Filename paths are stripped; files are not saved to disk.
-
-The content hash covers the entire upload including metadata, after normalizing
-line endings and removing an optional UTF-8 BOM. Renaming a file does not change
-the hash; changing its visibility does. `split` separates `##` sections before
-applying the configured character size and overlap. Text before a section uses
-the policy title as its section label.
-
-`Ingestor.store` checks for duplicates before creating the OpenAI client, then
-embeds all chunks in one provider call and stores them atomically. Duplicate
-uploads report zero newly indexed chunks. A failed embedding call leaves an
-existing policy untouched. Concurrent duplicate uploads can still incur redundant
-embedding calls, but storage checks again under locks and indexes the content once.
-
-To index the sample using your configured OpenAI key (incurs embedding usage),
-run this Python from the project root:
-
-```python
-from pathlib import Path
-from assistant.ingestion import Ingestor
-from assistant.repository import pool, close_pool
-
-path = Path('fixtures/policies/leave_policy.md')
-try:
-    with pool().connection() as connection:
-        result = Ingestor().store(connection, path.read_text(encoding='utf-8'), path.name)
-    print(result)
-finally:
-    close_pool()
+Architecture
+Application components
+```mermaid
+flowchart TD
+    UI["HTML and JavaScript interface"] --> API["FastAPI API"]
+    API --> ING["Document ingestion"]
+    API --> PIPE["Question pipeline"]
+    ING --> DB["PostgreSQL and pgvector"]
+    PIPE --> DB
+    ING --> PROVIDERS["OpenAI or scripted demo providers"]
+    PIPE --> PROVIDERS
+    DB --> AUDIT["Documents, chunks, users, and audit records"]
 ```
-
-Uploads preserve explicit `active` or `superseded` metadata. To retire an old
-version, reupload it with `status: superseded`; uploading a new active version
-does not automatically change another version's status.
-
-Tests inject a fake embedding provider and make no OpenAI requests. The opt-in
-database suite covers upload, renamed duplicates, edits, and permission-aware
-retrieval in a rolled-back test schema.
-
-## Retrieval and reranking
-
-`assistant.retrieval.Retriever.search(connection, question, user)` embeds the
-question and calls the repository's permission-filtered hybrid search. It sends
-only those candidates to a structured-output reranker using `HELPER_MODEL` and
-`prompts/rerank.txt`. Load the user through `repository.get_user` first.
-
-The reranker assigns integer scores from 0 to 10. Scores below
-`MIN_RERANK_SCORE` (default 4) are dropped; at most `TOP_K` (default 4) chunks
-survive. Ties preserve fused candidate order. Returned hits have reranker scores
-and retain their policy version, section, source, and update date.
-
-Empty search results skip reranking. Missing ratings are discarded; invalid or
-duplicate candidate numbers and malformed scores raise an error. Provider errors
-propagate rather than falling back to unreranked results. Question and policy
-content are sent as JSON data separately from reranker instructions.
-
-`include_history=True` allows superseded versions through repository search.
-The pipeline will decide history intent and perform the one query-rewrite retry;
-neither behavior is implemented in this layer. Tests inject fake embeddings and
-reranker responses, including a PostgreSQL test confirming that inaccessible
-content never reaches the reranker. Live OpenAI calls are not yet verified.
-
-## Answer generation
-
-`assistant.generation.Generator.generate(question, hits)` accepts only hits already
-permission-filtered by retrieval. It uses `ANSWER_MODEL` and `prompts/answer.txt`
-to request a structured draft with inline numbered references and supporting
-quotations. Citation labels, filenames, and chunk IDs come from the retrieved
-hits, not from model-generated metadata.
-
-Quotation checks normalize whitespace and case, then check the quote against its
-referenced chunk. Missing citations, unknown chunk numbers, empty answers, and
-mismatched inline references fail grounding. `Answer.grounding_errors` records
-these failures, and `fully_grounded` is false when any remain. These are string
-and reference checks, not proof of semantic support or complete claim coverage.
-
-A failed grounding check triggers one repair attempt using the same evidence.
-After a second failure, the draft is returned with an explicit untrusted warning.
-This is separate from the pipeline's planned query-rewrite retry. Empty evidence
-skips the model; model refusals return a standard insufficient-evidence message.
-Malformed structured output and provider failures propagate to the caller.
-
-Citing a superseded policy adds a historical-policy warning. Each cited policy
-older than `STALE_AFTER_DAYS` adds a freshness warning, even if another cited
-policy is fresh. Uncited policies do not produce warnings. Generation tests use
-fake model responses; live OpenAI generation remains unverified.
-
-## Question pipeline
-
-`assistant.pipeline.Pipeline.ask(connection, question, username)` loads the user
-from PostgreSQL, detects history intent, and retrieves only eligible evidence.
-Use a connection context that commits on success to persist its audit record:
-
-```python
-from assistant.pipeline import Pipeline
-from assistant.repository import pool, close_pool
-
-try:
-    with pool().connection() as connection:
-        answer = Pipeline().ask(connection, 'How much annual leave?', 'bob')
-    print(answer.text)
-    print(answer.warnings)
-finally:
-    close_pool()
+The API coordinates uploads and questions. PostgreSQL holds structured records, full-text indexes, and vectors. OpenAI supplies live embeddings and model responses. Demo mode substitutes scripted providers and uses a separate database schema.
+Document ingestion
+1. Check the selected identity, upload size, file encoding, and department ownership.
+2. Parse the Markdown front matter and validate required policy metadata.
+3. Normalize the upload and compute a content hash for duplicate detection.
+4. Split the body into sections, then into overlapping character-based chunks.
+5. Generate embeddings for the chunks.
+6. Atomically store the document and chunks, or report a duplicate.
+An edited title/version replaces its stored content and chunks atomically. Embedding failures leave the previous policy untouched. Uploading a new active version does not automatically supersede another version: publication status must be managed explicitly.
+Question answering
+```mermaid
+flowchart TD
+    Q["Question and selected identity"] --> ACCESS["Load user and determine history intent"]
+    ACCESS --> SEARCH["Permission-filtered hybrid search and reranking"]
+    SEARCH --> CHECK{"Sufficient evidence?"}
+    CHECK -->|Yes| ANSWER["Generate answer and check citations"]
+    CHECK -->|"No, first attempt"| REWRITE["Rewrite query once"]
+    REWRITE --> SEARCH
+    CHECK -->|"No, retry exhausted"| REFUSE["Return insufficient-evidence refusal"]
+    ANSWER --> AUDIT["Record outcome and commit"]
+    REFUSE --> AUDIT
 ```
+- Vector and keyword search apply SQL access and policy-eligibility filters before candidate selection.
+- Fused candidates are reranked; low-scoring candidates are discarded.
+- Strong evidence can skip an additional grading call. Otherwise, a grader evaluates whether the excerpts answer the original question.
+- One query-rewrite retry is allowed when evidence is insufficient. Identity, history settings, and policy date remain unchanged.
+- Generation always receives the original question. Citation checks may trigger one separate repair attempt.
+- An answer that fails grounding checks after repair is returned with an explicit untrusted warning; this differs from an insufficient-evidence refusal.
+- Completed answers and refusals are audited. Audit or commit failure prevents a success response.
+Technology stack
+Layer	Technology
+Language	Python
+API	FastAPI and Uvicorn
+Browser interface	HTML and JavaScript in web/index.html
+Database	PostgreSQL
+Vector search	pgvector with HNSW indexing
+Keyword search	PostgreSQL full-text search with GIN indexes and ts_rank
+Candidate fusion	Reciprocal rank fusion
+Live providers	OpenAI embeddings and structured model responses
+Local services	Docker Compose
+Dependency management	uv, pyproject.toml, and uv.lock
+Tests	Python unittest and SQL smoke checks
 
-This invokes OpenAI when configured. Demo usernames are identities for learning;
-an authenticated API must obtain the username from a trusted session or token.
 
-Evidence scoring at least `HIGH_CONFIDENCE_SCORE` skips the extra grading call.
-Otherwise the evidence grader decides whether the excerpts answer the original
-question. Insufficient evidence triggers at most one rewritten search using the
-grader's missing-facts description. Rewrites retain the same identity, history
-flag, and policy date, and generation always receives the original question.
-After two failed searches the pipeline refuses instead of guessing. No searchable
-documents skips retrieval and rewrite calls entirely.
+Keyword ranking uses PostgreSQL ts_rank, not BM25. The current implementation does not require React, ChromaDB, or SQLite.
+Repository structure
+assistant/
+  api.py             # HTTP endpoints and application lifecycle
+  config.py          # Validated configuration
+  demo.py            # Scripted offline providers
+  generation.py      # Structured answers and citation checks
+  ingestion.py       # Markdown parsing, chunking, and indexing
+  models.py          # Shared models and metadata validation
+  pipeline.py        # Intent, retrieval, grading, retries, and auditing
+  repository.py      # Database access and filtered search
+  retrieval.py       # Query embeddings and reranking
+  upload.py          # Upload handling
+fixtures/
+  policies/          # Fictional demonstration policies
+  README.md          # Fixture scenarios
+prompts/             # Answer, grade, intent, rerank, and rewrite prompts
+tests/               # Unit, database integration, and SQL smoke tests
+web/
+  index.html         # Upload and chat interface
+.env.example         # Configuration template without real secrets
+docker-compose.yml   # Local PostgreSQL service
+pyproject.toml       # Python project and dependency configuration
+schema.sql           # Tables, indexes, and seeded demo identities
+uv.lock              # Locked dependencies
+Prerequisites
+- Git
+- Python matching the project version in .python-version and pyproject.toml
+- uv
+- Docker Desktop running, with Docker Compose available
+- An OpenAI API key with available API credits for live mode only
+Local setup
+1. Open the project
+Clone this repository using the URL shown by GitHub's Code button, then open its root directory in a terminal. The following commands assume that directory contains pyproject.toml and docker-compose.yml.
+2. Install dependencies
+uv sync --group dev
+3. Configure the environment
+If .env does not exist, create it from the template:
+cp -n .env.example .env
+If .env already exists, keep it and add any missing settings from .env.example manually. Never commit real API keys.
 
-Each completed answer or refusal inserts one audit row with the user, original
-question, answered/grounded flags, and source labels. Audit failure prevents a
-success response. The caller owns the transaction: provider/validation failures
-raise and do not create completed-answer audit rows; committing is required to
-persist successful outcomes. Error-request auditing is not implemented yet.
-The returned trace describes intent, access counts, retrieval attempts, grading,
-rewriting, generation checks, and the audit insert. Citation repair remains a
-separate bounded operation in the generator.
+For the offline demo, set:
+DEMO_MODE=true
+For live OpenAI operations, set:
+DEMO_MODE=false
+OPENAI_API_KEY=your_real_key_here
+Use .env.example as the configuration reference. Settings are loaded from the project .env, with process environment variables taking precedence. Restart the server after changing modes.
+4. Start PostgreSQL
+docker compose config --quiet
+docker compose up -d --wait
+docker compose ps
+The documented local configuration uses:
+Setting	Local development value
+Host	localhost
+Port	5434
+Database	ragdb
+User	rag
+Password	ragsecret
 
-## Run the application
 
-Install dependencies, start the database, apply the schema, and launch the API:
+These are local development credentials. The named pgdata volume preserves data between restarts. If you customize them, keep Compose and application settings consistent.
+5. Initialize live storage
+For live mode, enable pgvector and apply the database schema:
+docker compose exec -T db psql -U rag -d ragdb -v ON_ERROR_STOP=1 -c "CREATE EXTENSION IF NOT EXISTS vector;"
+docker compose exec -T db psql -U rag -d ragdb -v ON_ERROR_STOP=1 < schema.sql
+The schema can be reapplied without deleting data or overwriting seeded users. Future changes to existing tables require migrations. Demo mode initializes its separate schema automatically.
+6. Start the application
+.venv/bin/python -m uvicorn assistant.api:app --reload --host 127.0.0.1 --port 8000
+- Application: http://127.0.0.1:8000
+- Interactive API documentation: http://127.0.0.1:8000/docs
+- Health endpoint: http://127.0.0.1:8000/health
+The server binds to the local machine. PostgreSQL is required in both modes.
+Try the demo
+With DEMO_MODE=true, confirm the interface shows a demo banner. The library starts empty: fixture files are not indexed automatically.
+Scenario	Steps	Intended behavior
+Internal policy answer	Select Bob, upload leave_policy.md, ask "How much annual leave?"	A cited excerpt from the uploaded policy
+Guest restriction	Switch to Guest and ask about the internal leave policy	Restricted evidence is unavailable
+Public policy	Select Carol and upload refund_policy.md; ask a refund question as Guest	Public evidence can be retrieved
+Version handling	Upload both travel policy versions as Carol; ask about current rules and version 2	Appropriate eligibility and historical citations
+Missing evidence	Ask an unrelated question	Insufficient-evidence refusal
 
-    uv sync --group dev
-    docker compose up -d --wait
-    docker compose exec -T db psql -U rag -d ragdb -v ON_ERROR_STOP=1 < schema.sql
-    .venv/bin/python -m uvicorn assistant.api:app --reload --host 127.0.0.1 --port 8000
 
-Open http://127.0.0.1:8000 for the interface or http://127.0.0.1:8000/docs for
-interactive API documentation. Set your OpenAI key in `.env` for live model calls.
-Select Bob (HR) to upload `fixtures/policies/leave_policy.md`, then ask how much
-annual leave employees receive. Switch to Guest to confirm the internal policy
-is not available. Uploading or asking may incur OpenAI usage.
+Use files from fixtures/policies/; consult fixtures/README.md for the full scenarios. Treat this table as a walkthrough to verify, not a report of completed live validation.
+Demo mode versus live mode
+Behavior	Demo	Live
+API key	Not required	Required for model operations
+Embeddings	Deterministic hashed word features	OpenAI embeddings
+Reranking and grading	Word-overlap rules	Model-backed responses
+Generation	Exact matching sentence labelled "Demo excerpt"	Model-generated structured draft
+Database schema	assistant_demo	public
+Purpose	Exercise application flow without API usage	Validate actual model and retrieval behavior
 
-The API provides `GET /`, `GET /health`, `GET /documents?username=guest`,
-`POST /documents` (multipart `file` and `username`), and `POST /ask` (JSON
-`question` and `username`). Health checks database connectivity and pgvector.
-Listing requires a known identity and returns only readable document metadata.
 
-Uploads require an employee identity, UTF-8 Markdown up to 2 MiB, and an owning
-department matching that identity. Guest uploads and edits to another
-department's existing version are rejected. Upload outcomes report inserted,
-replaced, or duplicate, together with the newly indexed chunk count.
-Question responses include text, citations, warnings, grounding errors, a trace,
-and the computed `fully_grounded` flag. The connection dependency commits before
-the response is sent, so commit failures cannot report successful indexing or
-auditing. Database and provider errors return generic messages without secrets.
+Demo mode does not establish semantic retrieval quality. Synonyms, negation, nuanced questions, and comparisons may not be interpreted correctly. It still exercises metadata validation, access filtering, citation checks, retry bounds, and auditing.
 
-This is a local learning interface: usernames are supplied by the client and
-can be impersonated. The selector is not login or production authentication.
-Replace it with a trusted session/token before a real deployment. The server
-defaults above bind to loopback, and responses are marked `no-store`.
-The interface renders policy and model text using text nodes, clears previous
-results on identity changes, and ignores responses from a previous identity.
+After switching to live mode, restart the server and upload the sample documents again. Demo documents and fake vectors are isolated; do not copy those vectors into live storage. Live mode never silently falls back to scripted providers when a key is missing or a request fails.
+Document format and publication rules
+Uploads must be UTF-8 .md files, up to 2 MiB, with a nonempty body and YAML front matter containing:
 
-API tests and the PostgreSQL upload-to-answer integration test use fake model
-responses. Visual browser verification remains pending; HTML delivery and
-JavaScript syntax have been checked.
+title, department, visibility, version, status, effective, and updated.
 
-## Run without an API key
+Use the fixtures as the authoritative examples of accepted values and field types. Dates use YYYY-MM-DD; department names are normalized to lowercase. Malformed YAML, duplicate or unsupported fields, and invalid metadata are rejected before embedding.
 
-Set this in the project `.env` file and restart the server:
+Splitting respects ## sections. Text before the first section uses the policy title as its section label. The content hash includes metadata, so changing visibility changes the hash; renaming the file does not.
 
-    DEMO_MODE=true
+Normal questions exclude superseded and future-effective policies. Historical questions can include superseded policies but still exclude future-effective policies. To retire a version, reupload it with status: superseded. A new active version does not automatically retire another version.
+API overview
+Method	Endpoint	Purpose
+GET	/	Browser interface
+GET	/health	Database connectivity, pgvector, and demo mode status
+GET	/config	Configuration information including demo mode status
+GET	/documents?username=guest	Readable document metadata for a known identity
+POST	/documents	Multipart upload with file and username
+POST	/ask	Question request with question and username
 
-Then run:
 
-    docker compose up -d --wait
-    .venv/bin/python -m uvicorn assistant.api:app --reload --host 127.0.0.1 --port 8000
+Example question request after the relevant document has been uploaded:
+curl -X POST http://127.0.0.1:8000/ask \
+  -H 'Content-Type: application/json' \
+  -d '{"question":"How much annual leave?","username":"bob"}'
+Responses include answer text, citations, warnings, grounding errors, a processing trace, and a fully_grounded flag. Demo responses also identify demo mode. The flag represents implemented string/reference checks; it does not prove full semantic support.
 
-Open http://127.0.0.1:8000. A prominent demo banner confirms that no API key is
-required. `GET /config` and `GET /health` report `demo_mode: true`; question and
-upload responses carry the same flag. Each completed demo question includes a
-warning and trace entry identifying the scripted providers.
+Uploads require an employee identity whose department matches the policy. Guests cannot upload. Restricted access requires employee status and membership in the owning department. All identities remain simulated until authentication is implemented.
+Database design
+Table	Purpose
+users	Seeded identities and access attributes
+documents	Policy metadata, versions, and unique content hashes
+chunks	Chunk text, 1536-dimensional embeddings, and generated English full-text data
+audit_events	Completed answer/refusal outcomes and source labels
 
-Upload `fixtures/policies/leave_policy.md` as Bob, then ask "How much annual
-leave?" Upload the public refund policy as Carol and ask about refunds as Guest.
-Upload both travel versions as Carol to compare the current hotel limit with
-version 2. The full sample list is in `fixtures/README.md`. The application
-still requires PostgreSQL, metadata validation, department ownership, and user
-permissions; no sample directory is scanned or automatically indexed.
 
-Demo embeddings are deterministic hashed word features. Reranking and evidence
-grading use word overlap. Intent uses simple historical-word/version patterns.
-Generation selects an exact matching sentence from the retrieved text and labels
-it "Demo excerpt". Citation verification, warnings, retry bounds, and audits run
-through the existing pipeline. This is a demonstration of application behavior,
-not a language model or a test of semantic retrieval quality. Synonyms, nuanced
-questions, negation, and comparisons may not be interpreted correctly.
-
-The connection pool automatically initializes and selects the `assistant_demo`
-schema when demo mode is enabled. Demo documents, fake vectors, users, and audits
-are separate from the normal `public` schema; existing live documents are not
-copied or changed. The demo library starts empty and persists across restarts.
-After obtaining an API key, set `DEMO_MODE=false` and restart the server. Normal
-mode uses the existing live library; upload demo-only documents again to generate
-real embeddings. Never copy fake demo vectors into the live tables. Leave the
-mode fixed for a running process and always restart when changing it.
-
-The default in `.env.example` remains `false`. Normal OpenAI behavior does not
-silently switch to fake providers when a key is missing or a request fails.
-Database integration tests verify demo uploads and duplicates, authorized answers,
-guest and department restrictions, historical citations, unrelated-question
-refusals, audit rows, and storage isolation without permitting an API key call.
+The schema includes HNSW vector and GIN full-text indexes. Document title/version pairs and content hashes are unique. SQL in the repository layer enforces request-time eligibility; table definitions alone do not provide that enforcement.
+Testing
+Unit tests
+Run the default suite without OpenAI or Docker:
+.venv/bin/python -m unittest discover -s tests -v
+Tests use injected fake providers. Database integration tests are opt-in.
+Database smoke checks
+With PostgreSQL running and the schema applied:
+docker compose exec -T db psql -U rag -d ragdb -v ON_ERROR_STOP=1 < tests/schema_smoke.sql
+Smoke-check test data is rolled back.
+PostgreSQL integration tests
+RUN_DATABASE_TESTS=1 .venv/bin/python -m unittest discover -s tests -v
+The integration suite uses temporary test schemas and rolled-back fixtures. Coverage includes ingestion, duplicates, edits, permissions, historical retrieval, demo isolation, citations, refusals, and audit records. API and upload-to-answer tests use fake model responses.
+Live evaluation plan
+With live mode configured and fixture documents reuploaded, record expected evidence, actual results, and failures for:
+- Directly answerable and paraphrased questions.
+- Unsupported questions and correct refusals.
+- Citation quotation matching and semantic claim support.
+- Guest restrictions and cross-department access attempts.
+- Current and historical policy selection.
+- Duplicate uploads and edited policy versions.
+- Failure behavior and transaction consistency.
+No live accuracy, latency, or cost benchmark is claimed yet.
+Limitations and next improvements
+- Real authentication: replace client-controlled usernames with identity from a trusted session or token.
+- Live validation: verify provider integration and run a representative evaluation set.
+- Grounding: current quote/reference checks do not prove semantic support, complete claim coverage, or absence of prompt injection.
+- Formats: Phase 1 accepts Markdown policies; PDF and DOCX support are future extensions.
+- Publication workflow: superseding an older policy requires an explicit metadata update.
+- Failure auditing: provider/validation failures do not currently create completed-answer audit rows; error-request auditing is not implemented.
+- Operations: deployment hardening, migrations, monitoring, and broader performance testing remain future work.
+Stop the local database
+docker compose down
+This stops the service while retaining data in the named volume.
+Project purpose
+This is a learning and portfolio project focused on building inspectable RAG application behavior: ingestion, filtered retrieval, evidence handling, citations, and failure paths. It uses fictional sample policies and makes its validation limits explicit.
