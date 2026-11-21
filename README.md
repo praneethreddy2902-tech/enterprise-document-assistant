@@ -49,6 +49,10 @@ The repository includes unit tests with fake providers and opt-in PostgreSQL int
 
 ## Architecture
 
+![Enterprise Document Assistant architecture: document ingestion, permission-filtered hybrid retrieval, evidence handling, citation checks, and auditing](docs/architecture.png)
+
+The diagram summarizes the implemented ingestion and question-answering workflows, including the bounded query-rewrite loop, live and offline demo providers, and the current authentication and grounding limitations.
+
 ### Application components
 
 ```mermaid
